@@ -1,0 +1,184 @@
+#!/usr/bin/python2.7
+# -*-coding:utf-8 -*-
+
+from sys import exit
+import numpy as np
+import os
+from PIL import Image
+import time
+import sys
+
+start=time.time()
+class Mypoint():
+    def __init__(self):
+        self.x=0
+        self.y=0
+
+p=np.load('./pchin.npy')
+q=np.load('./qchin.npy')
+MAXNUM=1
+CONTRALEN=len(p)
+IMAGEPATH='./'
+ALPHA=0.1
+DESPATH='transform.jpg'
+if len(sys.argv)<2:
+    img='sl2.jpg'
+else:
+    img=str(sys.argv[1])
+
+with open ('featureq.txt','r') as f:
+    a=f.read()
+dic=eval(a)
+nose=dic['nose_bridge'][3]
+diam=np.sqrt((q[8][0]-nose[0])**2+(q[8][1]-nose[1])**2)
+chindown=q[3:-4]
+chinleft=q[0:6]
+chinright=q[11:]
+def polyline(point,fla):
+    #usage:y=faceline(x)
+    if fla==0:
+        x=[tt[0] for tt in point]
+        y=[tt[1] for tt in point]
+        z1 = np.polyfit(x, y, 2)
+    else:
+        x=[tt[1] for tt in point]
+        y=[tt[0] for tt in point]
+        z1 = np.polyfit(x, y, 1)
+    faceline = np.poly1d(z1)
+    return faceline
+
+def get_weights(t):
+    global wlist
+    wlist=[]
+    tw=0
+    for kk in p:
+    #    print kk
+        if(kk[0]==t.x and kk[1]==t.y):
+            wlist.append(MAXNUM)
+            tw+=MAXNUM
+        else:
+            dist=1.0/((kk[0]-t.x)*(kk[0]-t.x)+(kk[1]-t.y)*(kk[1]-t.y))
+            wlist.append(dist)
+            tw+=dist
+   # print "tw value is {}".format(tw)
+    return tw,wlist
+
+def get_center(t):
+    tw,wlist=get_weights(t)
+    tqx=0
+    tqy=0
+    tpx=0
+    tpy=0
+    for i in range(CONTRALEN):
+        tqx+=q[i][0]*wlist[i]
+        tqy+=q[i][1]*wlist[i]
+        tpx+=p[i][0]*wlist[i]
+        tpy+=p[i][1]*wlist[i]
+    qcx=tqx/tw
+    qcy=tqy/tw
+    pcx=tpx/tw
+    pcy=tpy/tw
+    # print tqx,tw
+    return qcx,qcy,pcx,pcy
+
+def MLS(t):
+    if(len(p)==0):
+        return t
+    fv= Mypoint()
+    A=np.zeros((2,2))
+#    T=np.zeros((2,2))
+    B=np.zeros((2,2))
+    M=np.zeros((2,2))
+ #   wlist=[]
+  #  wlist=get_weights(t)
+    qcx,qcy,pcx,pcy = get_center(t)
+    P=Mypoint()
+    Q=Mypoint()
+    for i in range(CONTRALEN):
+        P.x=p[i][0]-pcx
+        P.y=p[i][1]-pcy
+        Q.x=q[i][0]-qcx
+        Q.y=q[i][1]-qcy
+        A[0][0]+=P.x*P.x*wlist[i]
+        A[0][1]+=P.x*P.y*wlist[i]
+        A[1][0]+=P.x*P.y*wlist[i]
+        A[1][1]+=P.y*P.y*wlist[i]
+
+        B[0][0]+=P.x*Q.x*wlist[i]
+        B[0][1]+=P.x*Q.y*wlist[i]
+        B[1][0]+=P.y*Q.x*wlist[i]
+        B[1][1]+=P.y*Q.y*wlist[i]
+
+    det=B[0][0]*B[1][1]-B[0][1]*B[1][0]
+    #print(det)
+    if(det<1e-3):
+        fv.x=t.x+pcx-qcx
+        fv.y=t.y+pcy-qcy
+        return fv
+    else:
+        pinvB=np.linalg.inv(B)
+        M=pinvB*A
+        fqdown=polyline(chindown,0)
+        liney=fqdown(t.x)
+        dis=np.sqrt((t.y-liney)**2)     
+        fv.x=(t.x-qcx)*M[0][0]+(t.y-qcy)*M[1][0]+pcx
+        fv.y=(t.x-qcx)*M[0][1]+(t.y-qcy)*M[1][1]+pcy
+        d=np.sqrt((t.x-nose[0])**2+(t.y-nose[1])**2)
+
+        alpha=np.exp(-0.03*dis)*1/(1+np.exp(ALPHA*(d-diam-8)))
+        fv.x=t.x+alpha*(fv.x-t.x)
+        fv.y=t.y+alpha*(fv.y-t.y)
+        return fv
+
+
+if __name__=='__main__':
+    image=Image.open(IMAGEPATH+img)
+    image= image.convert('RGB')
+    imgw=image.size[0]
+    imgh=image.size[1]
+    print(imgw, imgh)
+    # dImage=Image.new('RGB',(imgw*2,imgh*2))
+    dImage=Image.new('RGB',(imgw,imgh))
+ #   dImage = image.copy()
+    IR=Mypoint()
+    IR.x=0
+    IR.y=0
+    Origq=MLS(IR)
+    Origq.x=int(Origq.x)
+    Origq.y=int(Origq.y)
+    fqdown=polyline(chindown,0)
+    fql=polyline(chinleft,1)
+    fqr=polyline(chinright,1)
+    for i in range(imgw):
+        for j in range(imgh):
+           # if  fqdown(i)>j:
+              #  color=image.getpixel((i,j))
+            #    color=(255,0,0)
+             #   dImage.putpixel((i,j),color)
+              #  continue
+            d=np.sqrt((i-nose[0])**2+(j-nose[1])**2)
+           # if np.sqrt((i-nose[0])**2+(j-nose[1])**2)>diam:
+            #    color=image.getpixel((i,j))
+              #  color=(255,0,0)
+             #   dImage.putpixel((i,j),color)
+              #  continue
+            qtmp=Mypoint()
+            qtmp.x=i
+            qtmp.y=j
+            t=MLS(qtmp)
+            m=int(t.x-Origq.x)
+            n=int(t.y-Origq.y)
+           # color=cvGet2D(image,i,j)
+            if(m>=imgw or n>=imgh or m<0 or n<0):
+                color=(255,0,0)
+            else:
+                color=image.getpixel((m,n))
+           # if(m>=0 and dImage.size[0]>m and 0<=n and dImage.size[1]>n):
+                # print Origq.x, Origq.y, t.x, t.y, color
+                # cvSet2D(dImage,n,m,color)
+                dImage.putpixel((i,j),color)
+    dImage.save(DESPATH)
+    end=time.time()
+    print(end-start)
+
+    
